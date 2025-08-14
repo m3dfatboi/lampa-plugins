@@ -3,7 +3,7 @@
 
     var plugin = {
         name: 'External Subtitles Loader',
-        version: '1.3',
+        version: '1.4',
         description: 'Загружает субтитры из OpenSubtitles во время просмотра торрентов',
         params: {
             api_key: { type: 'string', name: 'OpenSubtitles API Key', default: '' },
@@ -16,33 +16,34 @@
             this.addToSettingsSidebar();
         },
         addToSettingsSidebar: function () {
-            // Добавляем в компонент шторки настроек
-            Lampa.Settings.component.add('subtitles', {
-                title: 'OpenSubtitles Субтитры',
-                subtitle: 'Настройки для внешних субтитров',
-                icon: 'subtitles',
-                onClick: function () {
-                    Lampa.Params.open({
-                        title: 'Настройки плагина',
-                        params: plugin.params,
-                        onChange: function (params) {
-                            Lampa.Storage.set('subtitles_api_key', params.api_key);
-                            Lampa.Storage.set('subtitles_language', params.language);
-                            Lampa.Noty.show('Настройки сохранены!');
-                        },
-                        onBack: function () {} // Для закрытия
-                    });
-                }
-            });
+            // Проверяем наличие Settings.component (для совместимости с версиями 2025)
+            if (Lampa.Settings && Lampa.Settings.component) {
+                Lampa.Settings.component.add('opensubtitles', {
+                    title: 'OpenSubtitles',
+                    subtitle: 'Настройки внешних субтитров',
+                    icon: 'subtitles',
+                    onClick: function () {
+                        Lampa.Params.open({
+                            title: 'Настройки плагина',
+                            params: plugin.params,
+                            onChange: function (params) {
+                                Lampa.Storage.set('subtitles_api_key', params.api_key);
+                                Lampa.Storage.set('subtitles_language', params.language);
+                                Lampa.Noty.show('Настройки сохранены! Перезапустите видео.');
+                            }
+                        });
+                    }
+                });
+            } else {
+                Lampa.Noty.show('Версия Lampa не поддерживает эту интеграцию. Обновите приложение.');
+            }
         },
         tryLoadExternalSubtitles: function (data) {
             var apiKey = Lampa.Storage.get('subtitles_api_key') || '';
             var lang = Lampa.Storage.get('subtitles_language') || 'rus';
 
-            if (!apiKey || data.source !== 'torrent') {
-                // Не вмешиваемся, если нет ключа или не торрент
-                return;
-            }
+            // Пропускаем, если нет ключа или не торрент — не трогаем встроенные субтитры
+            if (!apiKey || data.source !== 'torrent') return;
 
             var movieName = data.title || data.movie.title || '';
 
@@ -60,7 +61,7 @@
                     }
                 },
                 error: function (err) {
-                    Lampa.Noty.show('Ошибка: ' + (err.status || 'Проверьте соединение.'));
+                    Lampa.Noty.show('Ошибка поиска: ' + (err.message || 'Проверьте ключ.'));
                 }
             });
         },
@@ -72,8 +73,8 @@
                 data: { file_id: fileId },
                 success: function (response) {
                     if (response.link) {
-                        Lampa.Player.subtitle.add({ url: response.link, lang: lang, label: 'OpenSubtitles (внешние)' });
-                        Lampa.Noty.show('Внешние субтитры добавлены!');
+                        Lampa.Player.subtitle.add({ url: response.link, lang: lang, label: 'OpenSubtitles' });
+                        Lampa.Noty.show('Субтитры добавлены!');
                     }
                 },
                 error: function () {
