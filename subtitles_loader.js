@@ -9,8 +9,8 @@
             Lampa.Player.listen('start', this.loadSubtitles.bind(this));
         },
         loadSubtitles: function (data) {
-            var username = 'ТВОЙ_ЛОГИН_ЗДЕСЬ';
-            var password = 'ТВОЙ_ПАРОЛЬ_ЗДЕСЬ';
+            var username = 'm3dboi';
+            var password = 'N2P9XEYaisx#+ms';
             var lang = 'rus';
             var useragent = 'OSTestUserAgent';
 
