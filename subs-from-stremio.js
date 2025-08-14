@@ -1,75 +1,140 @@
 (function () {
     'use strict';
 
-    var plugin = {
-        name: 'External Subtitles Loader (ORG)',
-        version: '1.4',
-        description: 'Автоматически загружает субтитры из OpenSubtitles.org для торрентов',
+    var plugin_name = 'auto_subtitles_ru';
+    var plugin_version = '1.0.2';
+
+    var Plugin = {
+        component: 'auto_subtitles',
+        name: 'Русские субтитры',
+        description: 'Автоматическая загрузка русских субтитров',
+        version: plugin_version,
+
         init: function () {
-            Lampa.Player.listen('start', this.loadSubtitles.bind(this));
-        },
-        loadSubtitles: function (data) {
-            var username = 'm3dboi';
-            var password = 'N2P9XEYaisx#+ms';
-            var lang = 'rus';
-            var useragent = 'OSTestUserAgent';
-
-            if (data.source !== 'torrent') return;
-
-            var movieName = data.title || '';
-
-            var loginXml = '<?xml version="1.0" encoding="utf-8"?><methodCall><methodName>LogIn</methodName><params><param><value><string>' + username + '</string></value></param><param><value><string>' + password + '</string></value></param><param><value><string>' + lang + '</string></value></param><param><value><string>' + useragent + '</string></value></param></params></methodCall>';
-
-            Lampa.Network.request({
-                url: 'https://api.opensubtitles.org/xml-rpc',
-                method: 'POST',
-                headers: { 'Content-Type': 'text/xml' },
-                data: loginXml,
-                success: function (loginRes) {
-                    var tokenStart = loginRes.indexOf('<string>') + 8;
-                    var tokenEnd = loginRes.indexOf('</string>', tokenStart);
-                    var token = loginRes.substring(tokenStart, tokenEnd).trim();
-                    if (!token) return;
-
-                    var searchXml = '<?xml version="1.0" encoding="utf-8"?><methodCall><methodName>SearchSubtitles</methodName><params><param><value><string>' + token + '</string></value></param><param><value><array><data><value><struct><member><name>query</name><value><string>' + movieName + '</string></value></member><member><name>sublanguageid</name><value><string>' + lang + '</string></value></member></struct></value></data></array></value></param></params></methodCall>';
-
-                    Lampa.Network.request({
-                        url: 'https://api.opensubtitles.org/xml-rpc',
-                        method: 'POST',
-                        headers: { 'Content-Type': 'text/xml' },
-                        data: searchXml,
-                        success: function (searchRes) {
-                            var idStart = searchRes.indexOf('<string>', searchRes.indexOf('IDSubtitleFile')) + 8;
-                            var idEnd = searchRes.indexOf('</string>', idStart);
-                            var subtitleId = searchRes.substring(idStart, idEnd).trim();
-                            if (!subtitleId) return;
-
-                            var downloadXml = '<?xml version="1.0" encoding="utf-8"?><methodCall><methodName>DownloadSubtitles</methodName><params><param><value><string>' + token + '</string></value></param><param><value><array><data><value><string>' + subtitleId + '</string></value></data></array></value></param></params></methodCall>';
-
-                            Lampa.Network.request({
-                                url: 'https://api.opensubtitles.org/xml-rpc',
-                                method: 'POST',
-                                headers: { 'Content-Type': 'text/xml' },
-                                data: downloadXml,
-                                success: function (downloadRes) {
-                                    var dataStart = downloadRes.indexOf('<string>', downloadRes.indexOf('data')) + 8;
-                                    var dataEnd = downloadRes.indexOf('</string>', dataStart);
-                                    var base64Data = downloadRes.substring(dataStart, dataEnd).trim();
-                                    if (!base64Data) return;
-
-                                    var srtContent = atob(base64Data);
-                                    var blob = new Blob([srtContent], { type: 'text/plain' });
-                                    var subUrl = URL.createObjectURL(blob);
-
-                                    Lampa.Player.subtitle.add({ url: subUrl, lang: lang, label: 'OpenSubtitles.org' });
-                                }
-                            });
-                        }
-                    });
+            try {
+                // Более безопасная инициализация
+                if (typeof Lampa !== 'undefined' && Lampa.Activity) {
+                    this.startPlugin();
+                } else {
+                    console.warn('[AUTO_SUBTITLES_RU] Lampa не готов, повторная попытка...');
+                    setTimeout(this.init.bind(this), 1000);
                 }
-            });
-        }
-    };
+            } catch (error) {
+                console.error('[AUTO_SUBTITLES_RU] Ошибка инициализации:', error);
+            }
+        },
 
-    Lampa.Plugin.add(plugin);
-})();
+        startPlugin: function () {
+            var self = this;
+            
+            // Перехватываем создание плеера
+            var originalPlayer = Lampa.Player;
+            if (originalPlayer && originalPlayer.play) {
+                var originalPlay = originalPlayer.play;
+                
+                originalPlayer.play = function (params) {
+                    console.log('[AUTO_SUBTITLES_RU] Перехвачен запуск плеера:', params);
+                    
+                    // Запускаем оригинальный плеер
+                    var result = originalPlay.call(this, params);
+                    
+                    // Загружаем субтитры с задержкой
+                    setTimeout(function () {
+                        self.loadSubtitlesForVideo(params);
+                    }, 2000);
+                    
+                    return result;
+                };
+            }
+
+            // Альтернативный способ через события активности
+            if (Lampa.Activity && Lampa.Activity.active) {
+                Lampa.Activity.listener.follow('activity', function (e) {
+                    if (e.type === 'start' && e.component === 'player') {
+                        setTimeout(function () {
+                            self.checkActivePlayer();
+                        }, 3000);
+                    }
+                });
+            }
+
+            console.log('[AUTO_SUBTITLES_RU] Плагин запущен');
+        },
+
+        checkActivePlayer: function () {
+            try {
+                // Ищем активный плеер в DOM
+                var videoElements = document.querySelectorAll('video');
+                if (videoElements.length > 0) {
+                    var video = videoElements[videoElements.length - 1]; // Последний добавленный
+                    if (video && !video.hasAttribute('data-subtitles-loaded')) {
+                        this.addSubtitlesToVideoElement(video);
+                        video.setAttribute('data-subtitles-loaded', 'true');
+                    }
+                }
+            } catch (error) {
+                console.error('[AUTO_SUBTITLES_RU] Ошибка проверки плеера:', error);
+            }
+        },
+
+        loadSubtitlesForVideo: function (params) {
+            try {
+                var card = params && params.card;
+                if (!card) {
+                    console.warn('[AUTO_SUBTITLES_RU] Нет данных карточки');
+                    return;
+                }
+
+                var searchQuery = this.buildSearchQuery(card);
+                if (searchQuery) {
+                    this.searchSubtitles(searchQuery);
+                }
+            } catch (error) {
+                console.error('[AUTO_SUBTITLES_RU] Ошибка загрузки субтитров:', error);
+            }
+        },
+
+        buildSearchQuery: function (card) {
+            var title = card.original_title || card.title || card.name;
+            if (!title) return null;
+
+            var query = title;
+            
+            // Добавляем год если есть
+            if (card.release_date) {
+                var year = new Date(card.release_date).getFullYear();
+                query += ' ' + year;
+            }
+
+            // Для сериалов добавляем сезон и эпизод
+            if (card.seasons || card.number_of_seasons) {
+                // Пытаемся определить текущий сезон/эпизод
+                var season = 1; // По умолчанию
+                var episode = 1; // По умолчанию
+                
+                query += ' S' + String(season).padStart(2, '0') + 'E' + String(episode).padStart(2, '0');
+            }
+
+            return query;
+        },
+
+        searchSubtitles: function (query) {
+            // Используем более простой и надёжный источник
+            var urls = [
+                'https://www.opensubtitles.org/api/v1/subtitles?query=' + encodeURIComponent(query) + '&languages=ru',
+                'https://api.opensubtitles.com/api/v1/subtitles?query=' + encodeURIComponent(query) + '&languages=ru'
+            ];
+
+            this.trySubtitleSources(urls, 0);
+        },
+
+        trySubtitleSources: function (urls, index) {
+            if (index >= urls.length) {
+                console.log('[AUTO_SUBTITLES_RU] Субтитры не найдены во всех источниках');
+                return;
+            }
+
+            var self = this;
+            var url = urls[index];
+
+            this
