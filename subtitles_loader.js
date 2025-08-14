@@ -3,15 +3,15 @@
 
     var plugin = {
         name: 'External Subtitles Loader (ORG)',
-        version: '1.1',
+        version: '1.2',
         description: 'Автоматически загружает субтитры из OpenSubtitles.org для торрентов',
         init: function () {
             Lampa.Player.listen('start', this.loadSubtitles.bind(this));
         },
         loadSubtitles: function (data) {
-            var username = 'ТВОЙ_ЛОГИН_ЗДЕСЬ'; // Твой username от opensubtitles.org
-            var password = 'ТВОЙ_ПАРОЛЬ_ЗДЕСЬ'; // Твой password
-            var lang = 'rus'; // Дефолтный язык
+            var username = 'm3dboi'; // Твой username от opensubtitles.org
+            var password = 'N2P9XEYaisx#+ms'; // Твой password
+            var lang = 'rus'; // Дефолтный язык (измени, если нужно)
             var useragent = 'OSTestUserAgent';
 
             if (data.source !== 'torrent') return;
@@ -26,7 +26,7 @@
                 headers: { 'Content-Type': 'text/xml' },
                 data: loginXml,
                 success: function (loginResponse) {
-                    var tokenMatch = loginResponse.match(/<name>token<\/name><value><string>([^<]+)<\/string><\/value>/);
+                    var tokenMatch = loginResponse.match(/<name>token<\/name>\s*<value><string>([^<]+)<\/string><\/value>/);
                     var token = tokenMatch ? tokenMatch[1] : null;
                     if (!token) return;
 
@@ -38,7 +38,7 @@
                         headers: { 'Content-Type': 'text/xml' },
                         data: searchXml,
                         success: function (searchResponse) {
-                            var idMatch = searchResponse.match(/<name>IDSubtitleFile<\/name><value><string>([^<]+)<\/string><\/value>/);
+                            var idMatch = searchResponse.match(/<name>IDSubtitleFile<\/name>\s*<value><string>([^<]+)<\/string><\/value>/);
                             var subtitleId = idMatch ? idMatch[1] : null;
                             if (!subtitleId) return;
 
@@ -50,7 +50,7 @@
                                 headers: { 'Content-Type': 'text/xml' },
                                 data: downloadXml,
                                 success: function (downloadResponse) {
-                                    var base64Match = downloadResponse.match(/<name>data<\/name><value><string>([^<]+)<\/string><\/value>/);
+                                    var base64Match = downloadResponse.match(/<name>data<\/name>\s*<value><string>([^<]+)<\/string><\/value>/);
                                     var base64Data = base64Match ? base64Match[1] : null;
                                     if (!base64Data) return;
 
