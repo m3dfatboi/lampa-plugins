@@ -1,35 +1,35 @@
 (function () {
-  const PLUGIN_ID = 'subs-ru-opensubtitles';
+  const PLUGIN_ID = 'subs-ru-opensubs';
   const LABEL = 'Субтитры (RU)';
-  const LANG_CODE = 'ru';
+  const LANG = 'ru';
 
-  // Утилита: задержка
+  // ---------- Utils ----------
   const delay = (ms) => new Promise(r => setTimeout(r, ms));
+  const safe = (v) => (v == null ? '' : String(v));
 
-  // Утилита: простая конвертация SRT -> WebVTT
   function srtToVtt(srtText) {
-    const vtt = 'WEBVTT\n\n' + srtText
-      .replace(/\r+/g, '')
-      .replace(/^\s+|\s+$/g, '')
-      .replace(/(\d+)\n(\d{2}:\d{2}:\d{2}),(\d{3}) --> (\d{2}:\d{2}:\d{2}),(\d{3})/g,
-               ' $1\n$2.$3 --> $4.$5')
+    const txt = safe(srtText).replace(/\r+/g, '').trim();
+    // Удаляем нумерацию блоков и приводим запятые к точкам
+    const vtt = 'WEBVTT\n\n' + txt
       .replace(/^\d+\n/gm, '')
-      .replace(/\n{2,}/g, '\n\n');
+      .replace(/(\d{2}:\d{2}:\d{2}),(\d{3})\s-->\s(\d{2}:\d{2}:\d{2}),(\d{3})/g, '$1.$2 --> $3.$4')
+      .replace(/\n{3,}/g, '\n\n');
     return vtt;
   }
 
-  // Хелпер: безопасный fetch с таймаутом и заголовками
   async function safeFetch(url, options = {}, timeoutMs = 15000) {
+    const u = safe(url);
     const controller = new AbortController();
     const id = setTimeout(() => controller.abort(), timeoutMs);
     try {
-      const resp = await fetch(url, {
+      const resp = await fetch(u, {
         method: 'GET',
         credentials: 'omit',
         mode: 'cors',
         headers: {
           'Accept': 'text/html,application/json,*/*',
-          'User-Agent': 'Mozilla/5.0 (compatible; Lampa-Plugin/1.0)',
+          // UA маскируем под браузер
+          'User-Agent': 'Mozilla/5.0 LampaPlugin/1.0',
         },
         signal: controller.signal,
         ...options
@@ -40,124 +40,145 @@
     }
   }
 
-  // Парсинг результатов OpenSubtitles из HTML
-  // ПРИМЕЧАНИЕ: структура страниц может меняться; при изменениях обновить селекторы.
+  // ---------- Parsing ----------
   function parseOpenSubtitlesHtml(html) {
-    const dom = document.implementation.createHTMLDocument('');
-    dom.documentElement.innerHTML = html;
+    const doc = document.implementation.createHTMLDocument('');
+    doc.documentElement.innerHTML = safe(html);
 
-    // Ищем карточки субтитров
     const items = [];
-    const rows = dom.querySelectorAll('section a[href*="/en/subtitles/"], section a[href*="/ru/subtitles/"], a[href*="/subtitles/"]');
-
-    rows.forEach(a => {
+    // Захватываем максимально широкий список ссылок на карточки субтитров
+    const anchors = doc.querySelectorAll('a[href*="/subtitles/"] , a[href*="/ru/subtitles/"], a[href*="/en/subtitles/"]');
+    anchors.forEach(a => {
       const href = a.getAttribute('href') || '';
       if (!href.includes('/subtitles/')) return;
 
-      // Ищем язык и название
-      const parent = a.closest('article, div, li') || a.parentElement;
-      const text = (a.textContent || '').trim();
-      const langHint = (parent?.textContent || '').toLowerCase();
+      const container = a.closest('article,li,div,section,tbody,tr') || a.parentElement;
+      const text = safe(a.textContent).trim();
+      const ctx = safe(container ? container.textContent : '').toLowerCase();
 
-      // Фильтрация по русскому языку
-      const isRu = langHint.includes('russian') || langHint.includes('рус') || langHint.includes('(ru)') || /(?:^|\W)ru(?:\W|$)/.test(langHint);
+      const isRu = ctx.includes('russian') || ctx.includes('рус') || /\bru\b/.test(ctx) || /\brus\b/.test(ctx);
       if (!isRu) return;
 
-      // Оценка "качества" по названию
-      const quality = /hi|forced|full/i.test(text) ? 'hi' : 'normal';
-
       items.push({
-        title: text || 'Russian subtitles',
+        name: text || 'Russian subtitles',
         pageUrl: new URL(href, 'https://www.opensubtitles.org/').toString(),
-        lang: 'ru',
-        quality
+        source: 'OpenSubtitles',
+        lang: LANG
       });
     });
 
-    // Удаляем дубликаты по pageUrl
-    const uniq = [];
+    // Уникализируем по pageUrl
     const seen = new Set();
+    const result = [];
     for (const it of items) {
       if (seen.has(it.pageUrl)) continue;
       seen.add(it.pageUrl);
-      uniq.push(it);
+      result.push(it);
     }
-    return uniq;
+    return result;
   }
 
-  // Получение прямой ссылки на файл субтитров со страницы субтитров
   async function resolveSubtitleDownload(pageUrl) {
-    // Ищем на странице ссылку на загрузку .srt/.ass/.vtt
     const res = await safeFetch(pageUrl);
-    if (!res.ok) throw new Error('OpenSubtitles page fetch failed');
+    if (!res.ok) throw new Error('OS page fetch failed');
     const html = await res.text();
 
-    const dom = document.implementation.createHTMLDocument('');
-    dom.documentElement.innerHTML = html;
+    const doc = document.implementation.createHTMLDocument('');
+    doc.documentElement.innerHTML = html;
 
-    // Популярные варианты ссылок на загрузку
-    let downloadA = dom.querySelector('a[href*="/download/"], a[href*="fileadownload"], a[href*=".srt"], a[href*=".vtt"], a[href*=".ass"]');
-    if (!downloadA) {
-      // иногда ссылка может быть с data-атрибутов/кнопок
-      downloadA = Array.from(dom.querySelectorAll('a, button'))
-        .find(el => /download|скачать|\.srt|\.vtt|\.ass/i.test(el.getAttribute('href') || el.getAttribute('data-url') || ''));
+    // Ищем кнопку/ссылку скачивания
+    let link = doc.querySelector('a[href*="/download/"], a[href$=".srt"], a[href$=".vtt"], a[href$=".ass"]');
+    if (!link) {
+      link = Array.from(doc.querySelectorAll('a,button')).find(el => {
+        const h = safe(el.getAttribute('href') || el.getAttribute('data-url'));
+        return /download|\.srt|\.vtt|\.ass|скачать/i.test(h);
+      });
     }
+    if (!link) throw new Error('OS: no download link');
 
-    if (!downloadA) throw new Error('No download link found');
-    const raw = downloadA.getAttribute('href') || downloadA.getAttribute('data-url');
-    const url = new URL(raw, pageUrl).toString();
-    return url;
+    const raw = link.getAttribute('href') || link.getAttribute('data-url') || '';
+    return new URL(raw, pageUrl).toString();
   }
 
-  // Поиск субтитров на OpenSubtitles без API
-  async function searchOpenSubtitles(meta) {
-    // Попробуем несколько стратегий: imdb, сериал (s/e), просто title+year
-    const queries = [];
-    if (meta.imdb_id) {
-      // У OpenSubtitles встречается фильтр imdbid: https://www.opensubtitles.org/en/search2/imdbid-tt1234567/sublanguageid-rus
-      queries.push(`https://www.opensubtitles.org/en/search2/imdbid-${meta.imdb_id}/sublanguageid-rus`);
-    }
-    // Сериал
-    if (meta.title && meta.season && meta.episode) {
-      const q = encodeURIComponent(`${meta.title} S${String(meta.season).padStart(2,'0')}E${String(meta.episode).padStart(2,'0')}`);
-      queries.push(`https://www.opensubtitles.org/en/search2/sublanguageid-rus/moviename-${q}`);
-    }
-    // Фильм
-    if (meta.title && meta.year) {
-      const q = encodeURIComponent(`${meta.title} ${meta.year}`);
-      queries.push(`https://www.opensubtitles.org/en/search2/sublanguageid-rus/moviename-${q}`);
-    }
-    // Запасной — только title
-    if (meta.title) {
-      const q = encodeURIComponent(meta.title);
-      queries.push(`https://www.opensubtitles.org/en/search2/sublanguageid-rus/moviename-${q}`);
-    }
+  async function fetchAndPrepareSubtitle(downloadUrl) {
+    const resp = await safeFetch(downloadUrl);
+    if (!resp.ok) throw new Error('Subtitle download failed');
+    const ctype = safe(resp.headers.get('content-type')).toLowerCase();
 
-    const results = [];
-    for (const url of queries) {
+    // В идеале обрабатывать zip. Здесь базовая поддержка текстовых форматов.
+    const buf = await resp.arrayBuffer();
+    let text = '';
+    try {
+      text = new TextDecoder('utf-8').decode(buf);
+    } catch (_) {
       try {
-        await delay(400); // не спамим
-        const resp = await safeFetch(url);
-        if (!resp.ok) continue;
-        const html = await resp.text();
-        const items = parseOpenSubtitlesHtml(html);
-        // Нормализация
-        for (const it of items) {
-          results.push({
-            name: it.title,
-            lang: 'ru',
-            source: 'OpenSubtitles',
-            pageUrl: it.pageUrl
-          });
-        }
+        text = new TextDecoder('windows-1251').decode(new Uint8Array(buf));
       } catch (e) {
-        // игнорируем конкретный запрос, идем дальше
+        throw new Error('Decode failed');
       }
     }
 
-    // Уникализируем по pageUrl
-    const uniq = [];
+    let vtt;
+    if (ctype.includes('text/vtt') || text.trim().startsWith('WEBVTT') || /\.vtt(\?|$)/i.test(downloadUrl)) {
+      vtt = text;
+    } else {
+      // для .srt/.ass делаем конвертацию в vtt (ASS — упрощённо)
+      vtt = srtToVtt(text);
+    }
+
+    const blob = new Blob([vtt], { type: 'text/vtt' });
+    return URL.createObjectURL(blob);
+  }
+
+  // ---------- Search ----------
+  function buildQueries(meta) {
+    const queries = [];
+    const imdb = safe(meta.imdb_id);
+    const title = safe(meta.title).trim();
+    const year = meta.year ? String(meta.year) : '';
+    const s = Number.isFinite(+meta.season) ? +meta.season : 0;
+    const e = Number.isFinite(+meta.episode) ? +meta.episode : 0;
+
+    if (imdb) {
+      // imdbid формат на OS: imdbid-tt1234567
+      queries.push(`https://www.opensubtitles.org/en/search2/imdbid-${encodeURIComponent(imdb)}/sublanguageid-rus`);
+    }
+    if (title && s && e) {
+      const q = encodeURIComponent(`${title} S${String(s).padStart(2,'0')}E${String(e).padStart(2,'0')}`);
+      queries.push(`https://www.opensubtitles.org/en/search2/sublanguageid-rus/moviename-${q}`);
+    }
+    if (title && year) {
+      const q = encodeURIComponent(`${title} ${year}`);
+      queries.push(`https://www.opensubtitles.org/en/search2/sublanguageid-rus/moviename-${q}`);
+    }
+    if (title) {
+      const q = encodeURIComponent(title);
+      queries.push(`https://www.opensubtitles.org/en/search2/sublanguageid-rus/moviename-${q}`);
+    }
+    return queries;
+  }
+
+  async function searchOpenSubtitles(meta) {
+    const queries = buildQueries(meta);
+    console.log('[SubsRU] queries', queries);
+    const results = [];
+
+    for (const url of queries) {
+      try {
+        await delay(350);
+        const r = await safeFetch(url);
+        if (!r.ok) continue;
+        const html = await r.text();
+        const items = parseOpenSubtitlesHtml(html);
+        for (const it of items) results.push(it);
+      } catch (e) {
+        console.warn('[SubsRU] query failed', url, e);
+      }
+    }
+
+    // Уникализация
     const seen = new Set();
+    const uniq = [];
     for (const r of results) {
       if (seen.has(r.pageUrl)) continue;
       seen.add(r.pageUrl);
@@ -166,50 +187,15 @@
     return uniq;
   }
 
-  // Загрузка файла субтитров и подготовка blob URL
-  async function fetchAndPrepareSubtitle(downloadUrl) {
-    const resp = await safeFetch(downloadUrl);
-    if (!resp.ok) throw new Error('Subtitle download failed');
-
-    // В некоторых случаях OpenSubtitles отдает zip. Здесь базовая обработка только “text/*”.
-    const contentType = resp.headers.get('content-type') || '';
-    const buf = await resp.arrayBuffer();
-    let text = '';
-
-    if (/text\/plain|application\/octet-stream|text\/srt|text\/vtt|application\/x-subrip/i.test(contentType) || buf) {
-      // Пробуем как текст (SRT/VTT/ASS)
-      try {
-        text = new TextDecoder('utf-8').decode(buf);
-      } catch (_) {
-        text = new TextDecoder('windows-1251', { fatal: false }).decode(new Uint8Array(buf));
-      }
-    } else {
-      throw new Error('Unsupported subtitle content-type');
-    }
-
-    let vttText;
-    if (/\.vtt(\?|$)/i.test(downloadUrl) || /^WEBVTT/.test(text.trim())) {
-      vttText = text;
-    } else {
-      // SRT/ASS -> VTT. Для .ass конвертация упрощённая: зачастую плееру нужен VTT.
-      // Если потребуется корректная обработка ASS, стоит подключить ass-to-vtt конвертер.
-      vttText = srtToVtt(text);
-    }
-
-    const blob = new Blob([vttText], { type: 'text/vtt' });
-    const blobUrl = URL.createObjectURL(blob);
-    return blobUrl;
-  }
-
-  // Рендер UI в плеере Lampa
+  // ---------- UI ----------
   function renderList(items, onPick) {
     const list = items.map(it => ({
-      title: `${it.name} · ${it.source}`,
-      subtitle: 'ru',
+      title: `${safe(it.name) || 'RU subtitles'} · ${safe(it.source) || 'OpenSubtitles'}`,
+      subtitle: LANG,
       callback: () => onPick(it)
     }));
 
-    // Используем встроенный интерфейс выбора в Lampa
+    console.log('[SubsRU] items', list);
     Lampa.Select.show({
       title: LABEL,
       items: list,
@@ -217,120 +203,133 @@
     });
   }
 
-  // Применение субтитров к текущему плееру
   function applySubtitleToPlayer(vttUrl) {
-    const player = Lampa.Player || Lampa.PlayerVideo || Lampa.PlayerLite;
-    // Универсальный способ: событийная шина Lampa плеера
-    if (player && player.subtitles) {
-      // Новый способ (если доступен)
-      if (typeof player.subtitles.add === 'function') {
-        player.subtitles.clear && player.subtitles.clear();
-        player.subtitles.add({ label: 'Русские', language: 'ru', url: vttUrl });
-        player.subtitles.enable && player.subtitles.enable('ru');
-      } else {
-        // Старый способ — установить напрямую трек
-        Lampa.Player.listener && Lampa.Player.listener.send('subtitle', {
+    const player = Lampa.Player || Lampa.PlayerVideo || Lampa.PlayerLite || {};
+    const subs = player.subtitles;
+
+    try {
+      if (subs && typeof subs.add === 'function') {
+        subs.clear && subs.clear();
+        subs.add({ label: 'Русские', language: LANG, url: vttUrl });
+        subs.enable && subs.enable(LANG);
+      } else if (Lampa.Player && Lampa.Player.listener && Lampa.Player.listener.send) {
+        Lampa.Player.listener.send('subtitle', {
           label: 'Русские',
-          language: 'ru',
+          language: LANG,
           url: vttUrl
         });
+      } else if (Lampa.Event && Lampa.Event.emit) {
+        Lampa.Event.emit('player_subtitle', { url: vttUrl, label: 'Русские', lang: LANG });
+      } else {
+        console.warn('[SubsRU] no player subtitle API');
       }
-    } else {
-      // fallback: событие для плеера
-      Lampa.Event && Lampa.Event.emit('player_subtitle', { url: vttUrl, label: 'Русские', lang: 'ru' });
+      Lampa.Noty && Lampa.Noty.show && Lampa.Noty.show('Субтитры подключены: RU');
+    } catch (e) {
+      console.error('[SubsRU] apply error', e);
+      Lampa.Noty && Lampa.Noty.show && Lampa.Noty.show('Ошибка применения субтитров');
     }
-    Lampa.Noty.show('Субтитры подключены: RU');
   }
 
-  // Извлечение метаданных из контекста плеера Lampa
-  function resolveMetaFromLampa(data) {
+  function resolveMetaFromContext(data) {
+    const d = data || {};
+    const imdbRaw = safe(d.imdb_id || d.imdb);
+    const imdb = imdbRaw.startsWith('tt') ? imdbRaw : (imdbRaw ? 'tt' + imdbRaw : '');
     const meta = {
-      title: data?.title || data?.name || '',
-      year: data?.year || data?.release_year || '',
-      imdb_id: (data?.imdb_id || data?.imdb || '').replace(/^tt/, 'tt') || '',
-      season: data?.season || data?.episode ? parseInt(data?.season || 0) : 0,
-      episode: data?.episode ? parseInt(data?.episode) : 0,
-      type: data?.type || ''
+      title: safe(d.title || d.name),
+      year: d.year ? +d.year : (d.release_year ? +d.release_year : ''),
+      imdb_id: imdb,
+      season: Number.isFinite(+d.season) ? +d.season : 0,
+      episode: Number.isFinite(+d.episode) ? +d.episode : 0,
+      type: safe(d.type)
     };
+    console.log('[SubsRU] meta', meta);
     return meta;
   }
 
-  async function openSubtitlePicker(context) {
-    const meta = resolveMetaFromLampa(context);
+  async function openPicker(context) {
+    const meta = resolveMetaFromContext(context);
+    if (!meta.title && !meta.imdb_id) {
+      Lampa.Noty && Lampa.Noty.show && Lampa.Noty.show('Нет метаданных для поиска');
+      return;
+    }
     try {
-      Lampa.Noty.show('Поиск русских субтитров…');
+      Lampa.Noty && Lampa.Noty.show && Lampa.Noty.show('Поиск русских субтитров…');
       const list = await searchOpenSubtitles(meta);
       if (!list.length) {
-        Lampa.Noty.show('Субтитры не найдены');
+        Lampa.Noty && Lampa.Noty.show && Lampa.Noty.show('Субтитры не найдены');
         return;
       }
       renderList(list, async (picked) => {
         try {
-          const dlUrl = await resolveSubtitleDownload(picked.pageUrl);
-          const vttUrl = await fetchAndPrepareSubtitle(dlUrl);
-          applySubtitleToPlayer(vttUrl);
+          const dl = await resolveSubtitleDownload(picked.pageUrl);
+          const vtt = await fetchAndPrepareSubtitle(dl);
+          applySubtitleToPlayer(vtt);
         } catch (e) {
-          Lampa.Noty.show('Ошибка загрузки субтитров');
-          console.error('[SubsRU] download error', e);
+          console.error('[SubsRU] download/prepare error', e);
+          Lampa.Noty && Lampa.Noty.show && Lampa.Noty.show('Ошибка загрузки субтитров');
         }
       });
     } catch (e) {
-      Lampa.Noty.show('Ошибка поиска субтитров');
       console.error('[SubsRU] search error', e);
+      Lampa.Noty && Lampa.Noty.show && Lampa.Noty.show('Ошибка поиска субтитров');
     }
   }
 
-  // Инициализация: добавляем кнопку в плеер и пункт в "доп. меню" карточки
-  function initUIHooks() {
+  function initUI() {
     // Кнопка в плеере
     if (Lampa.Player && typeof Lampa.Player.addInteractive === 'function') {
       Lampa.Player.addInteractive({
-        title: LABEL,
-        subtitle: 'ru',
+        title: safe(LABEL),
+        subtitle: LANG,
         icon: 'cc',
         onClick: () => {
-          const ctx = Lampa.Player && Lampa.Player.video ? Lampa.Player.video() : Lampa.Activity && Lampa.Activity.active() || {};
-          openSubtitlePicker(ctx);
+          const ctx = (Lampa.Player && Lampa.Player.video && Lampa.Player.video()) ||
+                      (Lampa.Activity && Lampa.Activity.active && Lampa.Activity.active()) || {};
+          openPicker(ctx);
         }
       });
     }
 
-    // Кнопка в карточке фильма/серии (доп. действия)
-    Lampa.Listener.follow('full', function (e) {
-      if (e.type === 'button' && e.name === 'more') {
-        const card = e.data || {};
-        e.items.push({
-          title: LABEL,
-          subtitle: 'поиск ru на OpenSubtitles',
-          icon: 'cc',
-          onClick: () => openSubtitlePicker(card)
-        });
-      }
-    });
+    // Пункт в меню карточки
+    if (Lampa.Listener && typeof Lampa.Listener.follow === 'function') {
+      Lampa.Listener.follow('full', function (e) {
+        try {
+          if (e && e.type === 'button' && e.name === 'more' && Array.isArray(e.items)) {
+            const card = e.data || {};
+            e.items.push({
+              title: safe(LABEL),
+              subtitle: 'поиск ru на OpenSubtitles',
+              icon: 'cc',
+              onClick: () => openPicker(card)
+            });
+          }
+        } catch (err) {
+          console.warn('[SubsRU] follow full err', err);
+        }
+      });
+    }
   }
 
   function start() {
     try {
-      initUIHooks();
+      initUI();
       console.log(`[${PLUGIN_ID}] initialized`);
     } catch (e) {
       console.error(`[${PLUGIN_ID}] init error`, e);
     }
   }
 
-  // Регистрация плагина в Lampa
   if (window.Lampa) {
     if (Lampa.Plugins && typeof Lampa.Plugins.add === 'function') {
       Lampa.Plugins.add({
         id: PLUGIN_ID,
         title: LABEL,
-        description: 'Русские субтитры с OpenSubtitles без API',
-        version: '0.1.0',
+        description: 'Русские субтитры с OpenSubtitles (без API), ручной выбор',
+        version: '0.2.0',
         author: 'you',
         onLoad: start
       });
     } else {
-      // fallback, если нет менеджера плагинов
       start();
     }
   } else {
