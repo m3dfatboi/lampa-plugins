@@ -1,9 +1,12 @@
-/* subs-stable (OSv3-style, interactive tabs, ESC close, persistent settings, custom globe icon - Myna UI)
-   - Иконка кнопки: Myna UI Icons (MIT, Praveen Juge)
-   - Вкладки: Сериал | Фильм; OSv3 маршруты; настройки сохраняются и применяются сразу
+/* subs-stable (OSv3-style, interactive tabs, ESC close, persistent settings)
+   - Обновление кнопки:
+     • Размер 2em x 2em
+     • padding: 0.4em (иконка адаптируется)
+     • Удалена обводка
+     • Поведение для пульта: доступна фокусом и нажатием (tabindex, aria, role, keydown/keyup/enter/space)
 */
 (function () {
-  const FLAG='__SUBS_STABLE_OSV3_FULL_GLOBE_MYNAUI__';
+  const FLAG='__SUBS_STABLE_OSV3_FOCUSABLE_BTN__';
   if (window[FLAG]) return; window[FLAG]=true;
 
   const OSV3='https://opensubtitles-v3.strem.io/';
@@ -307,12 +310,12 @@
   // ===== Player controls globe button (Myna UI icon) =====
   (function(){
     const ID='subs-stable-btn';
-    const BTN_SIZE='2.6em';
+    const BTN_SIZE='2em';          // размер 2em x 2em
     const BTN_GAP='.5em';
+    const BTN_PADDING='0.4em';     // внутренний отступ 0.4em (иконка = 100% - паддинги)
 
-    // SVG: Myna UI Icons (MIT, Praveen Juge)
     const GLOBE_SVG = `
-      <svg xmlns="http://www.w3.org/2000/svg" width="1.25em" height="1.25em" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <svg xmlns="http://www.w3.org/2000/svg" width="100%" height="100%" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
         <!-- Icon from Myna UI Icons by Praveen Juge - MIT -->
         <path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
           d="M12 21a9 9 0 1 0 0-18m0 18a9 9 0 1 1 0-18m0 18c2.761 0 3.941-5.163 3.941-9S14.761 3 12 3m0 18c-2.761 0-3.941-5.163-3.941-9S9.239 3 12 3M3.5 9h17m-17 6h17"/>
@@ -331,33 +334,62 @@
       );
     }
 
+    function triggerOpen(){
+      try{ openModalWithTabs && openModalWithTabs('series'); }catch{}
+    }
+
     function ensure(){
       const h=host(); if(!h) return false;
       if(document.getElementById(ID)) return true;
 
       const btn=document.createElement('button');
-      btn.id=ID; btn.type='button'; btn.title='subtitles';
+      btn.id=ID; btn.type='button';
+      btn.setAttribute('title','Subtitles');
+      btn.setAttribute('aria-label','Open subtitles');
+      btn.setAttribute('role','button');
+      btn.setAttribute('tabindex','0'); // доступно для фокуса (пульт/клавиатура)
+
       btn.style.cssText=[
         'display:inline-flex','align-items:center','justify-content:center',
         `width:${BTN_SIZE}`,`height:${BTN_SIZE}`,'border-radius:50%','border:none',
         'background:transparent','color:#fff','cursor:pointer','transition:all .15s ease',
-        'outline:none','padding:0',`margin:0 ${BTN_GAP}`,'vertical-align:middle',
+        'outline:none',`padding:${BTN_PADDING}`,`margin:0 ${BTN_GAP}`,'vertical-align:middle',
         'transform:translateY(0.5px)'
       ].join(';');
 
       btn.innerHTML = GLOBE_SVG;
 
-      // hover: белый фон, чёрная иконка
-      btn.onmouseenter=()=>{ btn.style.background='#fff'; btn.style.color='#000'; };
-      btn.onmouseleave=()=>{ btn.style.background='transparent'; btn.style.color='#fff'; };
-      btn.onmousedown = ()=>{ btn.style.transform='translateY(0.5px) scale(0.96)'; };
-      btn.onmouseup   = ()=>{ btn.style.transform='translateY(0.5px) scale(1)'; };
+      // Hover/focus стили
+      const onOver = ()=>{ btn.style.background='#fff'; btn.style.color='#000'; };
+      const onOut  = ()=>{ btn.style.background='transparent'; btn.style.color='#fff'; };
+      btn.onmouseenter=onOver; btn.onmouseleave=onOut;
+      btn.onfocus = onOver;    btn.onblur = onOut;
 
-      btn.onclick=(e)=>{
-        e.preventDefault(); e.stopPropagation();
-        try{ openModalWithTabs && openModalWithTabs('series'); }catch{}
-      };
+      // Клик мышью / тач
+      btn.onclick=(e)=>{ e.preventDefault(); e.stopPropagation(); triggerOpen(); };
 
+      // Поддержка пульта/клавиш (Enter/Space)
+      btn.addEventListener('keydown', (e)=>{
+        const k=e.key;
+        if (k==='Enter' || k===' '){
+          e.preventDefault();
+          btn.classList.add('pressed');
+        }
+      });
+      btn.addEventListener('keyup', (e)=>{
+        const k=e.key;
+        if (k==='Enter' || k===' '){
+          e.preventDefault();
+          btn.classList.remove('pressed');
+          triggerOpen();
+        }
+      });
+
+      // ARIA активное состояние при нажатии
+      btn.addEventListener('mousedown', ()=>{ btn.style.transform='translateY(0.5px) scale(0.96)'; });
+      btn.addEventListener('mouseup',   ()=>{ btn.style.transform='translateY(0.5px) scale(1)'; });
+
+      // Вставка “вровень” со стандартной кнопкой
       const std = h.querySelector('button[aria-label="Subtitles"], button[title="Subtitles"]');
       if (std && std.parentElement===h) std.insertAdjacentElement('afterend', btn);
       else h.appendChild(btn);
