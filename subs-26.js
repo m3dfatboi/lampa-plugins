@@ -26,7 +26,7 @@
 
   const STORE_KEY='subs_stable_cfg';
   const cfg = Object.assign(
-    { fontSize:18, bottom:48, delay:0, selectedName:'', debug:false },
+    { fontSize:18, bottom:48, delay:0, selectedName:'', debug:true },
     JSON.parse(localStorage.getItem(STORE_KEY)||'{}')
   );
   const saveCfg=()=>localStorage.setItem(STORE_KEY, JSON.stringify(cfg));
