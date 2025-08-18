@@ -4,7 +4,7 @@
 
   // ВСТАВЬ URL БАЗЫ АДДОНА OpenSubtitles v3 (Stremio):
   // пример: 'https://opensubtitles-v3.onrender.com/'
-  const OSV3_BASE='https://PUT-YOUR-OPENSUBTITLESV3-ADDON-URL/';
+  const OSV3_BASE='https://opensubtitles-v3.strem.io/';
 
   const LANG='ru';
   const LABEL='Субтитры (OpenSubtitles v3 · RU)';
