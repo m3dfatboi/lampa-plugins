@@ -141,23 +141,41 @@
     return out;
   }
 
+  function pickEnFallback(d){
+    const arr=Array.isArray(d)?d:(Array.isArray(d?.subtitles)?d.subtitles:[]);
+    const out=[]; const seen=new Set();
+    for(const s of arr){
+      const lang=S(s.lang||s.language||s.iso||s.id).toLowerCase();
+      const name=S(s.name||s.title||s.fileName||s.provider||'SubHero') + ' [EN]';
+      const url=s.url||s.stream||s.href;
+      if(!url || seen.has(url)) continue;
+      seen.add(url);
+      if(lang==='en'||lang==='eng'||lang==='english') out.push({name,url});
+    }
+    return out;
+  }
+
   async function querySeriesSubHero(ttRaw,sRaw,eRaw){
     const tt=normImdb(ttRaw), s=Number(sRaw)||0, e=Number(eRaw)||0;
     if(!tt||s<=0||e<=0){ setDiag(`INVALID tt/s/e ${ttRaw}/${sRaw}/${eRaw}`); return []; }
     try{
-      // основной формат с параметрами
       const r=await httpGet(SUBHERO_BASE, `subtitles/series/${encodeURIComponent(tt)}.json`, {season:s, episode:e});
-      const ru=pickRuFromStremio(r.json);
-      setDiag(`SubHero S ${r.href} (${ru.length})`);
+      const total = (r.json?.subtitles||[]).length;
+      let ru=pickRuFromStremio(r.json);
+      setDiag(`SubHero S ${r.href} (total: ${total}, ru: ${ru.length})`);
       if(ru.length) return ru;
+      const en = pickEnFallback(r.json);
+      if(en.length) return en;
     }catch(e){ setDiag(`S err1: ${e.message||e}`); }
     try{
-      // запасной формат с "tt:s:e" в пути
       const key = `${tt}:${s}:${e}`;
       const r=await httpGet(SUBHERO_BASE, `subtitles/series/${encodeURIComponent(key)}.json`, {});
-      const ru=pickRuFromStremio(r.json);
-      setDiag(`SubHero S2 ${r.href} (${ru.length})`);
+      const total = (r.json?.subtitles||[]).length;
+      let ru=pickRuFromStremio(r.json);
+      setDiag(`SubHero S2 ${r.href} (total: ${total}, ru: ${ru.length})`);
       if(ru.length) return ru;
+      const en = pickEnFallback(r.json);
+      if(en.length) return en;
     }catch(e){ setDiag(`S err2: ${e.message||e}`); }
     return [];
   }
@@ -167,9 +185,12 @@
     if(!tt){ setDiag(`INVALID tt ${ttRaw}`); return []; }
     try{
       const r=await httpGet(SUBHERO_BASE, `subtitles/movie/${encodeURIComponent(tt)}.json`, {});
-      const ru=pickRuFromStremio(r.json);
-      setDiag(`SubHero M ${r.href} (${ru.length})`);
+      const total = (r.json?.subtitles||[]).length;
+      let ru=pickRuFromStremio(r.json);
+      setDiag(`SubHero M ${r.href} (total: ${total}, ru: ${ru.length})`);
       if(ru.length) return ru;
+      const en = pickEnFallback(r.json);
+      if(en.length) return en;
     }catch(e){ setDiag(`M err: ${e.message||e}`); }
     return [];
   }
@@ -365,7 +386,7 @@
     const GLOBE_SVG = `
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
         <path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
-          d="M12 21a9 9 0 1 0 0-18m0 18a9 9 0 1 1 0-18m0 18c2.761 0 3.941-5.163 3.941-9S14.761 3 12 3m0 18c-2.761 0-3.941-5-3.941-9S9.239 3 12 3M3.5 9h17m-17 6h17"/>
+          d="M12 21a9 9 0 1 0 0-18m0 18a9 9 0 1 1 0-18m0 18c2.761 0 3.941-5.163 3.941-9S14.761 3 12 3m0 18c-2.761 0-3.941-5.163-3.941-9S9.239 3 12 3M3.5 9h17m-17 6h17"/>
       </svg>
     `;
 
